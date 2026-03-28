@@ -1,0 +1,335 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local lp = Players.LocalPlayer
+
+local function getRoot()
+    local char = lp.Character or lp.CharacterAdded:Wait()
+    return char:FindFirstChild("HumanoidRootPart")
+end
+
+local AUTO_BLOCK_ENABLED = false
+local BLOCK_DELAY = 0.35
+
+local attackAnimIds = {
+    ["87276187714612"] = true,
+    ["121297937141842"] = true,
+    ["83465205704188"] = true,
+    ["103292185212679"] = true,
+    ["126830014841198"] = true,
+    ["126355327951215"] = true,
+    ["109667959938617"] = true,
+    ["126681776859538"] = true,
+    ["129976080405072"] = true,
+    ["121293883585738"] = true,
+    ["81639435858902"] = true,
+    ["137314737492715"] = true,
+    ["92173139187970"] = true,
+    ["122709416391"] = true,
+    ["879895330952"] = true
+}
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "FartHubKiller"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = lp:WaitForChild("PlayerGui")
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 820, 0, 520)
+mainFrame.Position = UDim2.new(0.5, -410, 0.5, -260)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local topBar = Instance.new("Frame")
+topBar.Size = UDim2.new(1, 0, 0, 50)
+topBar.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+topBar.BorderSizePixel = 0
+topBar.Parent = mainFrame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(0, 200, 1, 0)
+title.Position = UDim2.new(0, 60, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "Fart Hub"
+title.TextColor3 = Color3.fromRGB(0, 255, 100)
+title.TextSize = 24
+title.Font = Enum.Font.GothamBold
+title.Parent = topBar
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(0, 120, 0, 40)
+toggleBtn.Position = UDim2.new(0, 10, 0, 5)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
+toggleBtn.Text = "Toggle"
+toggleBtn.TextColor3 = Color3.new(0,0,0)
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 18
+toggleBtn.Parent = topBar
+
+local lockBtn = Instance.new("TextButton")
+lockBtn.Size = UDim2.new(0, 80, 0, 40)
+lockBtn.Position = UDim2.new(0, 140, 0, 5)
+lockBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+lockBtn.Text = "Lock"
+lockBtn.TextColor3 = Color3.new(1,1,1)
+lockBtn.Font = Enum.Font.Gotham
+lockBtn.TextSize = 18
+lockBtn.Parent = topBar
+
+local sidebar = Instance.new("Frame")
+sidebar.Size = UDim2.new(0, 180, 1, -50)
+sidebar.Position = UDim2.new(0, 0, 0, 50)
+sidebar.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+sidebar.BorderSizePixel = 0
+sidebar.Parent = mainFrame
+
+local blockLabel = Instance.new("TextLabel")
+blockLabel.Size = UDim2.new(1, 0, 0, 50)
+blockLabel.BackgroundColor3 = Color3.fromRGB(0, 80, 40)
+blockLabel.Text = "Block"
+blockLabel.TextColor3 = Color3.new(1,1,1)
+blockLabel.Font = Enum.Font.GothamBold
+blockLabel.TextSize = 20
+blockLabel.Parent = sidebar
+
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1, -180, 1, -50)
+content.Position = UDim2.new(0, 180, 0, 50)
+content.BackgroundTransparency = 1
+content.Parent = mainFrame
+
+local mainTab = Instance.new("TextButton")
+mainTab.Size = UDim2.new(0.5, 0, 0, 40)
+mainTab.Position = UDim2.new(0, 0, 0, 10)
+mainTab.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainTab.Text = "Main"
+mainTab.TextColor3 = Color3.new(1,1,1)
+mainTab.Parent = content
+
+local configTab = Instance.new("TextButton")
+configTab.Size = UDim2.new(0.5, 0, 0, 40)
+configTab.Position = UDim2.new(0.5, 0, 0, 10)
+configTab.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+configTab.Text = "Config"
+configTab.TextColor3 = Color3.new(1,1,1)
+configTab.Parent = content
+
+local killerToggle = Instance.new("TextButton")
+killerToggle.Size = UDim2.new(0, 200, 0, 40)
+killerToggle.Position = UDim2.new(0, 30, 0, 80)
+killerToggle.BackgroundColor3 = Color3.fromRGB(0, 80, 40)
+killerToggle.Text = "Killer Autolock"
+killerToggle.TextColor3 = Color3.new(1,1,1)
+killerToggle.Font = Enum.Font.GothamBold
+killerToggle.TextSize = 18
+killerToggle.Parent = content
+
+local delayLabel = Instance.new("TextLabel")
+delayLabel.Size = UDim2.new(0, 300, 0, 30)
+delayLabel.Position = UDim2.new(0, 30, 0, 140)
+delayLabel.BackgroundTransparency = 1
+delayLabel.Text = "Autoblock Delay"
+delayLabel.TextColor3 = Color3.new(1,1,1)
+delayLabel.TextXAlignment = Enum.TextXAlignment.Left
+delayLabel.Font = Enum.Font.Gotham
+delayLabel.TextSize = 18
+delayLabel.Parent = content
+
+local delaySliderFrame = Instance.new("Frame")
+delaySliderFrame.Size = UDim2.new(0, 300, 0, 20)
+delaySliderFrame.Position = UDim2.new(0, 30, 0, 170)
+delaySliderFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+delaySliderFrame.Parent = content
+
+local delaySlider = Instance.new("Frame")
+delaySlider.Size = UDim2.new(0.35, 0, 1, 0)
+delaySlider.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
+delaySlider.Parent = delaySliderFrame
+
+local delayValue = Instance.new("TextLabel")
+delayValue.Size = UDim2.new(0, 60, 1, 0)
+delayValue.Position = UDim2.new(1, 10, 0, 0)
+delayValue.BackgroundTransparency = 1
+delayValue.Text = "0.35s"
+delayValue.TextColor3 = Color3.new(1,1,1)
+delayValue.Font = Enum.Font.Gotham
+delayValue.TextSize = 18
+delayValue.Parent = delaySliderFrame
+
+local previewFrame = Instance.new("Frame")
+previewFrame.Size = UDim2.new(0, 280, 0, 180)
+previewFrame.Position = UDim2.new(0.65, 0, 0.3, 0)
+previewFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+previewFrame.Parent = content
+
+local previewLabel = Instance.new("TextLabel")
+previewLabel.Size = UDim2.new(1, 0, 0, 30)
+previewLabel.BackgroundTransparency = 1
+previewLabel.Text = "Hitbox Preview"
+previewLabel.TextColor3 = Color3.new(1,1,1)
+previewLabel.Font = Enum.Font.Gotham
+previewLabel.Parent = previewFrame
+
+local previewBox = Instance.new("Frame")
+previewBox.Size = UDim2.new(0.6, 0, 0.6, 0)
+previewBox.Position = UDim2.new(0.2, 0, 0.2, 0)
+previewBox.BackgroundColor3 = Color3.fromRGB(140, 0, 255)
+previewBox.BorderColor3 = Color3.new(1,1,1)
+previewBox.BorderSizePixel = 3
+previewBox.Parent = previewFrame
+
+local configFrame = Instance.new("Frame")
+configFrame.Size = UDim2.new(1, 0, 1, -60)
+configFrame.Position = UDim2.new(0, 0, 0, 60)
+configFrame.BackgroundTransparency = 1
+configFrame.Visible = false
+configFrame.Parent = content
+
+local configLabel = Instance.new("TextLabel")
+configLabel.Size = UDim2.new(1, 0, 0, 40)
+configLabel.Text = "Killer Autolock enabled - blocks Noli Void Rush, Sixer Pursuit, c00lkidd Walkspeed Override"
+configLabel.TextColor3 = Color3.new(1,1,1)
+configLabel.BackgroundTransparency = 1
+configLabel.Font = Enum.Font.Gotham
+configLabel.TextSize = 16
+configLabel.Parent = configFrame
+
+local dragging = false
+local dragStart
+local frameStart
+
+topBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        frameStart = mainFrame.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (
+        input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch
+    ) then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(
+            frameStart.X.Scale,
+            frameStart.X.Offset + delta.X,
+            frameStart.Y.Scale,
+            frameStart.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+delaySliderFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        local conn
+        conn = UserInputService.InputChanged:Connect(function(moveInput)
+            if moveInput.UserInputType == Enum.UserInputType.MouseMovement
+                or moveInput.UserInputType == Enum.UserInputType.Touch then
+                local relX = math.clamp((moveInput.Position.X - delaySliderFrame.AbsolutePosition.X) / delaySliderFrame.AbsoluteSize.X, 0, 1)
+                delaySlider.Size = UDim2.new(relX, 0, 1, 0)
+                BLOCK_DELAY = relX
+                delayValue.Text = string.format("%.2fs", BLOCK_DELAY)
+            end
+        end)
+        UserInputService.InputEnded:Connect(function(endInput)
+            if endInput.UserInputType == Enum.UserInputType.MouseButton1 then conn:Disconnect() end
+        end)
+    end
+end)
+
+mainTab.MouseButton1Click:Connect(function()
+    mainTab.BackgroundColor3 = Color3.fromRGB(0, 80, 40)
+    configTab.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    configFrame.Visible = false
+end)
+configTab.MouseButton1Click:Connect(function()
+    configTab.BackgroundColor3 = Color3.fromRGB(0, 80, 40)
+    mainTab.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    configFrame.Visible = true
+end)
+
+killerToggle.MouseButton1Click:Connect(function()
+    AUTO_BLOCK_ENABLED = not AUTO_BLOCK_ENABLED
+    killerToggle.BackgroundColor3 = AUTO_BLOCK_ENABLED and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(0, 80, 40)
+end)
+
+toggleBtn.MouseButton1Click:Connect(function()
+    sidebar.Visible = not sidebar.Visible
+    content.Visible = not content.Visible
+end)
+
+local function doBlock(state)
+    pcall(function()
+        local network = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Network")
+        if network and network:FindFirstChild("RemoteEvent") then
+            network.RemoteEvent:FireServer(state and "Block" or "Unblock")
+        else
+            game:GetService("VirtualInputManager"):SendKeyEvent(state, Enum.KeyCode.F, not state, game)
+        end
+    end)
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.05)
+
+        if not AUTO_BLOCK_ENABLED then
+            continue
+        end
+
+        local root = getRoot()
+        if not root then
+            continue
+        end
+
+        local myPos = root.Position
+
+        for _, enemy in ipairs(Players:GetPlayers()) do
+            if enemy == lp or not enemy.Character then
+                continue
+            end
+
+            local theirRoot = enemy.Character:FindFirstChild("HumanoidRootPart")
+            if not theirRoot then
+                continue
+            end
+
+            if (theirRoot.Position - myPos).Magnitude > 30 then
+                continue
+            end
+
+            local hum = enemy.Character:FindFirstChildOfClass("Humanoid")
+            local animator = hum and hum:FindFirstChild("Animator")
+            if not animator then
+                continue
+            end
+
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                if track.Animation and track.IsPlaying then
+                    local animId = track.Animation.AnimationId:match("%d+")
+
+                    if animId and attackAnimIds[animId] then
+                        task.wait(BLOCK_DELAY)
+                        doBlock(true)
+                        task.wait(0.07)
+                        doBlock(false)
+                        break
+                    end
+                end
+            end
+        end
+    end
+end)
