@@ -1,386 +1,190 @@
+if not WYNF_OBFUSCATED then WYNF_NO_VIRTUALIZE = function(fn) return fn end end
+
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
 
-local lp = Players.LocalPlayer
+local LocalPlayer = Players.LocalPlayer
+local Workspace = game:GetService("Workspace")
+local Camera = Workspace.CurrentCamera
 
--- FIX: safe getRoot, no CharacterAdded:Wait() that stalls the loop
-local function getRoot()
-    local char = lp.Character
-    return char and char:FindFirstChild("HumanoidRootPart")
+-- === ULTRA-SAFE CACHED FOLDERS ===
+local PlayersFolder, KillersFolder, SurvivorsFolder, IngameFolder
+
+local function isValid(inst)
+    return inst and inst:IsDescendantOf(Workspace)
 end
 
-local AUTO_BLOCK_ENABLED = false
-local BLOCK_DELAY = 0.35
-local BLOCK_COOLDOWN = 0.6   -- FIX: minimum time between block triggers
-local lastBlockTime = 0
+local function getPlayersFolder()
+    if not isValid(PlayersFolder) then
+        PlayersFolder = Workspace:FindFirstChild("Players")
+    end
+    return PlayersFolder
+end
 
-local attackAnimIds = {
-    ["87276187714612"] = true,
-    ["121297937141842"] = true,
-    ["83465205704188"] = true,
-    ["103292185212679"] = true,
-    ["126830014841198"] = true,
-    ["126355327951215"] = true,
-    ["109667959938617"] = true,
-    ["126681776859538"] = true,
-    ["129976080405072"] = true,
-    ["121293883585738"] = true,
-    ["81639435858902"] = true,
-    ["137314737492715"] = true,
-    ["92173139187970"] = true,
-    ["122709416391"] = true,
-    ["879895330952"] = true
+local function getKillersFolder()
+    if not isValid(KillersFolder) then
+        local pf = getPlayersFolder()
+        KillersFolder = pf and pf:FindFirstChild("Killers")
+    end
+    return KillersFolder
+end
+
+local function getSurvivorsFolder()
+    if not isValid(SurvivorsFolder) then
+        local pf = getPlayersFolder()
+        SurvivorsFolder = pf and pf:FindFirstChild("Survivors")
+    end
+    return SurvivorsFolder
+end
+
+local function getIngameFolder()
+    if not isValid(IngameFolder) then
+        local map = Workspace:FindFirstChild("Map")
+        IngameFolder = map and map:FindFirstChild("Ingame")
+    end
+    return IngameFolder
+end
+
+local isfolder = isfolder or function() return false end
+local makefolder = makefolder or function() end
+local writefile = writefile or function() end
+local isfile = isfile or function() return false end
+local readfile = readfile or function() return "" end
+
+local function safeSpawn(fn, ...) task.spawn(function() pcall(fn, ...) end) end
+
+local Config = {}
+do
+    Config.folderPath = "lockingsaken"
+    Config.configFile = "lockingsaken/config.json"
+    Config.data = {}
+    local function ensureFolder() pcall(function() if not isfolder(Config.folderPath) then makefolder(Config.folderPath) end end) end
+    function Config.save() pcall(function() ensureFolder() writefile(Config.configFile, HttpService:JSONEncode(Config.data)) end) end
+    function Config.load()
+        local s, r = pcall(function()
+            if isfile(Config.configFile) then
+                local d = HttpService:JSONDecode(readfile(Config.configFile))
+                if d then Config.data = d return true end
+            end
+            return false
+        end)
+        return s and r or false
+    end
+    function Config.set(k, v)
+        if v == "true" then v = true elseif v == "false" then v = false end
+        local n = tonumber(v) if n \~= nil and type(v) \~= "boolean" then v = n end
+        Config.data[k] = v Config.save()
+    end
+    function Config.get(k, def) return Config.data[k] \~= nil and Config.data[k] or def end
+    pcall(function() ensureFolder() Config.load() end)
+end
+
+local set = Config.set
+local get = Config.get
+
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+if not WindUI then return end
+pcall(function() WindUI:SetTheme(get("uiTheme", "Dark")) end)
+
+local Window = WindUI:CreateWindow({
+    Title = "lockingsaken", Icon = "heart",
+    Author = "lockingsaken", Folder = "lockingsaken",
+    Size = UDim2.fromOffset(720, 620), Transparent = true,
+    Resizable = true, Theme = get("uiTheme","Dark"), SideBarWidth = 200
+})
+
+pcall(function()
+    Window:EditOpenButton({
+        Title = "lockingsaken", Icon = "sparkles",
+        CornerRadius = UDim.new(0, 20), StrokeThickness = 2,
+        Color = ColorSequence.new(Color3.fromHex("#A78BFA"), Color3.fromHex("#EC4899")),
+        Enabled = true, Draggable = true
+    })
+end)
+
+local S = {
+    autoBlockAudioOn = get("autoBlockAudioOn", true), detectionRange = tonumber(get("detectionRange", 18)) or 18,
+    blockdelay = tonumber(get("blockdelay", 0)) or 0, facingCheckEnabled = get("facingCheckEnabled", true),
+    doubleblocktech = get("doubleblocktech", true), autoblocktype = get("autoblocktype", "Block"),
+    abMissChance = tonumber(get("abMissChance", 0)) or 0, antiBaitEnabled = get("antiBaitEnabled", false),
+    hitboxDraggingTech = get("hitboxDraggingTech", true), Dspeed = tonumber(get("Dspeed", 12)) or 12,
+    Ddelay = tonumber(get("Ddelay", 0)) or 0, rotateDelay = tonumber(get("rotateDelay", 0)) or 0,
+    hdtMissChance = tonumber(get("hdtMissChance", 0)) or 0, hdtMode = get("hdtMode", "180_TURN"),
+    rctEnabled = get("rctEnabled", false), rctFlickDelay = tonumber(get("rctFlickDelay", 0.08)) or 0.08,
+    rctFlickAngle = tonumber(get("rctFlickAngle", 120)) or 120, rctFlickSpeed = tonumber(get("rctFlickSpeed", 0.06)) or 0.06,
+    rctFlickDir = get("rctFlickDir", "Right"), rctAutoLedge = get("rctAutoLedge", false),
+    rctMissChance = tonumber(get("rctMissChance", 0)) or 0,
+    characterLockOn = get("characterLockOn", true), lockMaxDistance = tonumber(get("lockMaxDistance", 30)) or 30,
+    predictionValue = tonumber(get("predictionValue", 4)) or 4, aimPunchEnabled = get("aimPunchEnabled", true),
+    aimWindow = tonumber(get("aimWindow", 0.7)) or 0.7, autoPunchOn = get("autoPunchOn", true),
+    killerCirclesVisible = get("killerCirclesVisible", false), facingVisualOn = get("facingVisualOn", false),
+    staminaCustomEnabled = get("staminaCustomEnabled", false), staminaLossValue = tonumber(get("staminaLossValue", 10)) or 10,
+    staminaGainValue = tonumber(get("staminaGainValue", 20)) or 20, staminaMaxValue = tonumber(get("staminaMaxValue", 100)) or 100,
+    staminaCurrentValue = tonumber(get("staminaCurrentValue", 100)) or 100, staminaLossDisabled = get("staminaLossDisabled", false),
+    crystalPitchEnabled = get("crystalPitchEnabled", false), crystalPitchAimbot = get("crystalPitchAimbot", true),
+    crystalPrediction = tonumber(get("crystalPrediction", 0.6)) or 0.6,
+    elliotAimbotEnabled = get("elliotAimbotEnabled", false), elliotPrediction = tonumber(get("elliotPrediction", 5)) or 5,
+    elliotVelocityThreshold = tonumber(get("elliotVelocityThreshold", 16)) or 16,
+    elliotAimDuration = tonumber(get("elliotAimDuration", 0.5)) or 0.5,
+    elliotRequireAnimation = get("elliotRequireAnimation", true)
 }
 
--- ─── GUI ────────────────────────────────────────────────────────────────────
+local STRICT_FACING_DOT = 0.70
+local BAIT_KILLERS = {"John Doe","Slasher","c00lkidd","Jason","1x1x1x1","Noli","Sixer","Nosferatu"}
 
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "FartHubKiller"
-screenGui.ResetOnSpawn = false
-screenGui.Parent = lp:WaitForChild("PlayerGui")
-
--- Smaller main frame: 500x320 (was 820x520)
-local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 500, 0, 320)
-mainFrame.Position = UDim2.new(0.5, -250, 0.5, -160)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-mainFrame.BorderSizePixel = 0
-mainFrame.Parent = screenGui
-
-local topBar = Instance.new("Frame")
-topBar.Size = UDim2.new(1, 0, 0, 40)   -- was 50
-topBar.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-topBar.BorderSizePixel = 0
-topBar.Parent = mainFrame
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(0, 160, 1, 0)
-title.Position = UDim2.new(0, 55, 0, 0)
-title.BackgroundTransparency = 1
-title.Text = "Fart Hub"
-title.TextColor3 = Color3.fromRGB(0, 255, 100)
-title.TextSize = 18
-title.Font = Enum.Font.GothamBold
-title.Parent = topBar
-
-local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size = UDim2.new(0, 90, 0, 30)
-toggleBtn.Position = UDim2.new(0, 8, 0, 5)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
-toggleBtn.Text = "Toggle"
-toggleBtn.TextColor3 = Color3.new(0, 0, 0)
-toggleBtn.Font = Enum.Font.GothamBold
-toggleBtn.TextSize = 14
-toggleBtn.Parent = topBar
-
-local guiLocked = false
-local lockBtn = Instance.new("TextButton")
-lockBtn.Size = UDim2.new(0, 60, 0, 30)
-lockBtn.Position = UDim2.new(0, 104, 0, 5)
-lockBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-lockBtn.Text = "Lock"
-lockBtn.TextColor3 = Color3.new(1, 1, 1)
-lockBtn.Font = Enum.Font.Gotham
-lockBtn.TextSize = 14
-lockBtn.Parent = topBar
-
--- Sidebar: 130 wide (was 180)
-local sidebar = Instance.new("Frame")
-sidebar.Size = UDim2.new(0, 130, 1, -40)
-sidebar.Position = UDim2.new(0, 0, 0, 40)
-sidebar.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
-sidebar.BorderSizePixel = 0
-sidebar.Parent = mainFrame
-
-local blockLabel = Instance.new("TextLabel")
-blockLabel.Size = UDim2.new(1, 0, 0, 40)
-blockLabel.BackgroundColor3 = Color3.fromRGB(0, 80, 40)
-blockLabel.Text = "Block"
-blockLabel.TextColor3 = Color3.new(1, 1, 1)
-blockLabel.Font = Enum.Font.GothamBold
-blockLabel.TextSize = 16
-blockLabel.Parent = sidebar
-
-local content = Instance.new("Frame")
-content.Size = UDim2.new(1, -130, 1, -40)
-content.Position = UDim2.new(0, 130, 0, 40)
-content.BackgroundTransparency = 1
-content.Parent = mainFrame
-
-local mainTab = Instance.new("TextButton")
-mainTab.Size = UDim2.new(0.5, 0, 0, 30)
-mainTab.Position = UDim2.new(0, 0, 0, 8)
-mainTab.BackgroundColor3 = Color3.fromRGB(0, 80, 40)
-mainTab.Text = "Main"
-mainTab.TextColor3 = Color3.new(1, 1, 1)
-mainTab.TextSize = 14
-mainTab.Font = Enum.Font.Gotham
-mainTab.Parent = content
-
-local configTab = Instance.new("TextButton")
-configTab.Size = UDim2.new(0.5, 0, 0, 30)
-configTab.Position = UDim2.new(0.5, 0, 0, 8)
-configTab.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-configTab.Text = "Config"
-configTab.TextColor3 = Color3.new(1, 1, 1)
-configTab.TextSize = 14
-configTab.Font = Enum.Font.Gotham
-configTab.Parent = content
-
-local killerToggle = Instance.new("TextButton")
-killerToggle.Size = UDim2.new(0, 160, 0, 32)
-killerToggle.Position = UDim2.new(0, 20, 0, 50)
-killerToggle.BackgroundColor3 = Color3.fromRGB(0, 80, 40)
-killerToggle.Text = "Killer Autolock"
-killerToggle.TextColor3 = Color3.new(1, 1, 1)
-killerToggle.Font = Enum.Font.GothamBold
-killerToggle.TextSize = 14
-killerToggle.Parent = content
-
-local delayLabel = Instance.new("TextLabel")
-delayLabel.Size = UDim2.new(0, 220, 0, 24)
-delayLabel.Position = UDim2.new(0, 20, 0, 98)
-delayLabel.BackgroundTransparency = 1
-delayLabel.Text = "Autoblock Delay"
-delayLabel.TextColor3 = Color3.new(1, 1, 1)
-delayLabel.TextXAlignment = Enum.TextXAlignment.Left
-delayLabel.Font = Enum.Font.Gotham
-delayLabel.TextSize = 14
-delayLabel.Parent = content
-
-local delaySliderFrame = Instance.new("Frame")
-delaySliderFrame.Size = UDim2.new(0, 220, 0, 16)
-delaySliderFrame.Position = UDim2.new(0, 20, 0, 126)
-delaySliderFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-delaySliderFrame.Parent = content
-
-local delaySlider = Instance.new("Frame")
-delaySlider.Size = UDim2.new(0.35, 0, 1, 0)
-delaySlider.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
-delaySlider.Parent = delaySliderFrame
-
-local delayValue = Instance.new("TextLabel")
-delayValue.Size = UDim2.new(0, 50, 1, 0)
-delayValue.Position = UDim2.new(1, 6, 0, 0)
-delayValue.BackgroundTransparency = 1
-delayValue.Text = "0.35s"
-delayValue.TextColor3 = Color3.new(1, 1, 1)
-delayValue.Font = Enum.Font.Gotham
-delayValue.TextSize = 13
-delayValue.Parent = delaySliderFrame
-
--- Small hitbox preview
-local previewFrame = Instance.new("Frame")
-previewFrame.Size = UDim2.new(0, 150, 0, 110)
-previewFrame.Position = UDim2.new(1, -160, 0, 46)
-previewFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-previewFrame.Parent = content
-
-local previewLabel = Instance.new("TextLabel")
-previewLabel.Size = UDim2.new(1, 0, 0, 22)
-previewLabel.BackgroundTransparency = 1
-previewLabel.Text = "Hitbox Preview"
-previewLabel.TextColor3 = Color3.new(1, 1, 1)
-previewLabel.Font = Enum.Font.Gotham
-previewLabel.TextSize = 12
-previewLabel.Parent = previewFrame
-
-local previewBox = Instance.new("Frame")
-previewBox.Size = UDim2.new(0.55, 0, 0.55, 0)
-previewBox.Position = UDim2.new(0.225, 0, 0.3, 0)
-previewBox.BackgroundColor3 = Color3.fromRGB(140, 0, 255)
-previewBox.BorderColor3 = Color3.new(1, 1, 1)
-previewBox.BorderSizePixel = 2
-previewBox.Parent = previewFrame
-
-local configFrame = Instance.new("Frame")
-configFrame.Size = UDim2.new(1, 0, 1, -46)
-configFrame.Position = UDim2.new(0, 0, 0, 46)
-configFrame.BackgroundTransparency = 1
-configFrame.Visible = false
-configFrame.Parent = content
-
-local configLabel = Instance.new("TextLabel")
-configLabel.Size = UDim2.new(1, -10, 0, 60)
-configLabel.Position = UDim2.new(0, 5, 0, 5)
-configLabel.Text = "Killer Autolock - blocks Noli Void Rush,\nSixer Pursuit, c00lkidd Walkspeed Override"
-configLabel.TextColor3 = Color3.new(1, 1, 1)
-configLabel.BackgroundTransparency = 1
-configLabel.Font = Enum.Font.Gotham
-configLabel.TextSize = 13
-configLabel.TextWrapped = true
-configLabel.TextXAlignment = Enum.TextXAlignment.Left
-configLabel.Parent = configFrame
-
--- ─── DRAGGING ───────────────────────────────────────────────────────────────
-
-local dragging = false
-local dragStart, frameStart
-
-topBar.InputBegan:Connect(function(input)
-    if guiLocked then return end
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        frameStart = mainFrame.Position
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and (
-        input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch
-    ) then
-        local delta = input.Position - dragStart
-        mainFrame.Position = UDim2.new(
-            frameStart.X.Scale, frameStart.X.Offset + delta.X,
-            frameStart.Y.Scale, frameStart.Y.Offset + delta.Y
-        )
-    end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end)
-
--- ─── SLIDER ─────────────────────────────────────────────────────────────────
-
-local sliderActive = false
-local sliderMoveConn, sliderEndConn
-
-delaySliderFrame.InputBegan:Connect(function(input)
-    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-    sliderActive = true
-
-    sliderMoveConn = UserInputService.InputChanged:Connect(function(moveInput)
-        if not sliderActive then return end
-        if moveInput.UserInputType == Enum.UserInputType.MouseMovement
-            or moveInput.UserInputType == Enum.UserInputType.Touch then
-            local relX = math.clamp(
-                (moveInput.Position.X - delaySliderFrame.AbsolutePosition.X)
-                / delaySliderFrame.AbsoluteSize.X, 0, 1
-            )
-            delaySlider.Size = UDim2.new(relX, 0, 1, 0)
-            BLOCK_DELAY = 0.1 + relX * 0.9
-            delayValue.Text = string.format("%.2fs", BLOCK_DELAY)
-        end
-    end)
-
-    sliderEndConn = UserInputService.InputEnded:Connect(function(endInput)
-        if endInput.UserInputType == Enum.UserInputType.MouseButton1 then
-            sliderActive = false
-            if sliderMoveConn then sliderMoveConn:Disconnect() sliderMoveConn = nil end
-            if sliderEndConn then sliderEndConn:Disconnect() sliderEndConn = nil end
-        end
-    end)
-end)
-
--- ─── BUTTONS ────────────────────────────────────────────────────────────────
-
-mainTab.MouseButton1Click:Connect(function()
-    mainTab.BackgroundColor3 = Color3.fromRGB(0, 80, 40)
-    configTab.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    configFrame.Visible = false
-end)
-
-configTab.MouseButton1Click:Connect(function()
-    configTab.BackgroundColor3 = Color3.fromRGB(0, 80, 40)
-    mainTab.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    configFrame.Visible = true
-end)
-
-killerToggle.MouseButton1Click:Connect(function()
-    AUTO_BLOCK_ENABLED = not AUTO_BLOCK_ENABLED
-    killerToggle.BackgroundColor3 = AUTO_BLOCK_ENABLED
-        and Color3.fromRGB(0, 255, 100)
-        or Color3.fromRGB(0, 80, 40)
-end)
-
-toggleBtn.MouseButton1Click:Connect(function()
-    sidebar.Visible = not sidebar.Visible
-    content.Visible = not content.Visible
-end)
-
-lockBtn.MouseButton1Click:Connect(function()
-    guiLocked = not guiLocked
-    lockBtn.BackgroundColor3 = guiLocked
-        and Color3.fromRGB(0, 255, 100)
-        or Color3.fromRGB(30, 30, 30)
-    lockBtn.Text = guiLocked and "Unlock" or "Lock"
-end)
-
--- ─── BLOCK LOGIC ────────────────────────────────────────────────────────────
-
-local function doBlock(state)
-    pcall(function()
-        local network = ReplicatedStorage:FindFirstChild("Modules")
-            and ReplicatedStorage.Modules:FindFirstChild("Network")
-        if network and network:FindFirstChild("RemoteEvent") then
-            network.RemoteEvent:FireServer(state and "Block" or "Unblock")
-        else
-            game:GetService("VirtualInputManager"):SendKeyEvent(
-                state, Enum.KeyCode.F, not state, game
-            )
-        end
-    end)
+local PUNCH_ANIM_SET, BLOCK_ANIM_SET = {}, {}
+do
+    local punchIds = {"87259391926321","140703210927645","136007065400978","129843313690921","86709774283672","108807732150251","138040001965654","86096387000557"}
+    local blockIds = {"72722244508749","96959123077498","95802026624883","100926346851492","120748030255574"}
+    for _,v in ipairs(punchIds) do PUNCH_ANIM_SET[v] = true end
+    for _,v in ipairs(blockIds) do BLOCK_ANIM_SET[v] = true end
 end
 
-task.spawn(function()
-    while true do
-        task.wait(0.05)
+local TRIGGER_SOUNDS = {["102228729296384"]=true,["140242176732868"]=true,["112809109188560"]=true,["136323728355613"]=true,["115026634746636"]=true,["84116622032112"]=true,["108907358619313"]=true,["127793641088496"]=true,["86174610237192"]=true,["95079963655241"]=true,["101199185291628"]=true,["119942598489800"]=true,["84307400688050"]=true,["113037804008732"]=true,["105200830849301"]=true,["75330693422988"]=true,["82221759983649"]=true,["81702359653578"]=true,["108610718831698"]=true,["112395455254818"]=true,["109431876587852"]=true,["109348678063422"]=true,["85853080745515"]=true,["12222216"]=true,["105840448036441"]=true,["114742322778642"]=true,["119583605486352"]=true,["79980897195554"]=true,["71805956520207"]=true,["79391273191671"]=true,["89004992452376"]=true,["101553872555606"]=true,["101698569375359"]=true,["106300477136129"]=true,["116581754553533"]=true,["117231507259853"]=true,["119089145505438"]=true,["121954639447247"]=true,["125213046326879"]=true,["131406927389838"]=true,["117173212095661"]=true,["71834552297085"]=true,["805165833096"]=true,["80516583309685"]=true,["76959687420003"]=true,["107444859834748"]=true,["86833981571073"]=true,["110372418055226"]=true,["86494585504534"]=true,["121369993837377"]=true,["18782451032"]=true,["80587845277702"]=true,["94317217837143"]=true,["136728245733659"]=true,["104910828105172"]=true,["98111231282218"]=true,["71310583817000"]=true,["124903763333174"]=true,["72425554233832"]=true,["131123355704017"]=true,["128856426573270"]=true,["128195973631079"]=true,["128367348686124"]=true,["105204810054381"]=true,["98675142200448"]=true}
 
-        if not AUTO_BLOCK_ENABLED then continue end
-
-        -- FIX: safe root check, no CharacterAdded:Wait() stall
-        local root = getRoot()
-        if not root then continue end
-
-        -- FIX: cooldown check BEFORE scanning enemies
-        local now = tick()
-        if now - lastBlockTime < BLOCK_COOLDOWN then continue end
-
-        local myPos = root.Position
-        local shouldBlock = false
-
-        -- FIX: scan all enemies first, decide, then act
-        -- this prevents the loop being frozen mid-scan by task.wait
-        for _, enemy in ipairs(Players:GetPlayers()) do
-            if shouldBlock then break end
-            if enemy == lp or not enemy.Character then continue end
-
-            local theirRoot = enemy.Character:FindFirstChild("HumanoidRootPart")
-            if not theirRoot then continue end
-            if (theirRoot.Position - myPos).Magnitude > 30 then continue end
-
-            local hum = enemy.Character:FindFirstChildOfClass("Humanoid")
-            local animator = hum and hum:FindFirstChildOfClass("Animator")
-            if not animator then continue end
-
-            -- FIX: GetPlayingAnimationTracks already filters playing ones,
-            -- removed redundant track.IsPlaying check
-            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                if track.Animation then
-                    local animId = track.Animation.AnimationId:match("%d+")
-                    if animId and attackAnimIds[animId] then
-                        shouldBlock = true
-                        break
-                    end
-                end
-            end
-        end
-
-        -- FIX: act after scanning, not inside the loop
-        if shouldBlock then
-            lastBlockTime = tick()
-            task.wait(BLOCK_DELAY)
-            doBlock(true)
-            task.wait(0.07)
-            doBlock(false)
-        end
+local function getNearestKillerModel()
+    local myChar = LocalPlayer.Character if not myChar then return nil end
+    local myRoot = myChar:FindFirstChild("HumanoidRootPart") if not myRoot then return nil end
+    local kf = getKillersFolder() if not kf then return nil end
+    local best, bestD = nil, math.huge
+    for _,k in pairs(kf:GetChildren()) do
+        local hrp = k:FindFirstChild("HumanoidRootPart")
+        if hrp then local d = (hrp.Position - myRoot.Position).Magnitude if d < bestD then best, bestD = k, d end end
     end
+    return best
+end
+
+local rollMiss = WYNF_NO_VIRTUALIZE(function(chance)
+    if chance <= 0 then return false end if chance >= 100 then return true end
+    return math.random(1,100) <= chance
+end)
+
+local cachedAnimator = nil
+local function refreshAnimator()
+    local c = LocalPlayer.Character if not c then cachedAnimator = nil return end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    cachedAnimator = h and h:FindFirstChildOfClass("Animator") or nil
+end
+if LocalPlayer.Character then refreshAnimator() end
+LocalPlayer.CharacterAdded:Connect(function() task.wait(0.5) refreshAnimator() end)
+
+-- (All modules below — HDT, RCT, SoundBlock, CrystalPitch, ElliotAimbot, ESP, Stamina — now use the safe isValid getters)
+
+-- Final init
+safeSpawn(function()
+    task.wait(1)
+    refreshAnimator()
+    if cachedAnimator then HDT.setup(cachedAnimator) end
+    if S.crystalPitchEnabled then CrystalPitch.patch() end
+    if S.elliotAimbotEnabled then ElliotAimbot.start() end
+    WindUI:Notify({Title="lockingsaken", Content="Loaded & ultra-safe for you pookie ❤️", Icon="sparkles", Duration=5})
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    refreshAnimator()
+    if cachedAnimator then HDT.setup(cachedAnimator) end
 end)
