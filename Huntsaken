@@ -1,0 +1,653 @@
+--[[
+	Huntsaken Beta 1
+	Clean rebuild — Rayfield UI, mobile friendly, no Luraph leftovers
+	Owner: Noah | Co-owner: Noah | Helper: my good friend | Coder: me + my friend
+]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
+
+local LocalPlayer = Players.LocalPlayer
+
+local function safe(fn, ...)
+	local ok, res = pcall(fn, ...)
+	if ok then return res end
+	return nil
+end
+
+-- ============== LOAD RAYFIELD ==============
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+
+local Window = Rayfield:CreateWindow({
+	Name = "Huntsaken",
+	LoadingTitle = "Huntsaken",
+	LoadingSubtitle = "Beta 1",
+	Theme = "Default",
+	ConfigurationSaving = {
+		Enabled = true,
+		FolderName = "Huntsaken",
+		FileName = "Config",
+	},
+	Discord = { Enabled = false },
+	KeySystem = true,
+	KeySettings = {
+		Title = "Huntsaken Key",
+		Subtitle = "Key System",
+		Note = "Script owners are not responsible for bans.\nKey is: release",
+		FileName = "HuntsakenKey",
+		SaveKey = true,
+		GrabKeyFromSite = false,
+		Key = { "release" },
+	},
+})
+
+-- ============== STATE ==============
+local State = {
+	KillerEsp = false,
+	SurvivorEsp = false,
+	EspKillerColor = Color3.fromRGB(255, 40, 40),
+	EspSurvivorColor = Color3.fromRGB(40, 255, 40),
+	AutoBlock = false,
+	BlockRange = 15,
+	FacingThreshold = 0.25,
+	Noclip = false,
+	Invis = false,
+	M1Lock = false,
+	M1LockDur = 0.35,
+	M1LockRange = 20,
+	SilentAim = false,
+	SilentLead = 0.15,
+	TwoTimeBackstab = false,
+	TwoTimeDist = 15,
+	TwoTimeType = "Teleport",
+}
+
+local highlights = {}
+local blockTracked = {}
+local noclipConn, invisTrack, m1Conn, blockChildConn, ttConn
+local ttLast = 0
+local m1LockUntil, m1Target = 0, nil
+local silentInstalled = false
+local remoteEvent
+
+task.spawn(function()
+	local modules = ReplicatedStorage:FindFirstChild("Modules") or ReplicatedStorage:WaitForChild("Modules", 8)
+	if not modules then return end
+	local net = modules:FindFirstChild("Network", true)
+	if net then
+		if net:IsA("ModuleScript") then
+			remoteEvent = net:FindFirstChild("RemoteEvent") or net:FindFirstChildWhichIsA("RemoteEvent")
+		else
+			local inner = net:FindFirstChild("Network")
+			if inner then
+				remoteEvent = inner:FindFirstChild("RemoteEvent") or inner:FindFirstChildWhichIsA("RemoteEvent")
+			end
+		end
+	end
+	if not remoteEvent then
+		remoteEvent = modules:FindFirstChild("RemoteEvent", true)
+	end
+end)
+
+local function fireAbility(name)
+	if not remoteEvent then return end
+	pcall(function()
+		local packed = buffer.fromstring(string.pack("<Bi4", 3, #name) .. name)
+		remoteEvent:FireServer("UseActorAbility", { packed })
+	end)
+end
+
+local function getRole()
+	local char = LocalPlayer.Character
+	local parent = char and char.Parent
+	if not parent then return "None" end
+	local n = parent.Name
+	if n == "Killers" or n == "Survivors" then return n end
+	return "None"
+end
+
+local function getKillers()
+	local folder = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
+	if not folder then return {} end
+	local t = {}
+	for _, c in ipairs(folder:GetChildren()) do
+		if c:IsA("Model") then table.insert(t, c) end
+	end
+	return t
+end
+
+local function getSurvivors()
+	local folder = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Survivors")
+	if not folder then return {} end
+	local t = {}
+	for _, c in ipairs(folder:GetChildren()) do
+		if c:IsA("Model") then table.insert(t, c) end
+	end
+	return t
+end
+
+local function getRoot(model)
+	return model and (model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart)
+end
+
+local function closestEnemyRoot(maxDist)
+	local our = getRoot(LocalPlayer.Character)
+	if not our then return nil end
+	local role = getRole()
+	local list = (role == "Survivors") and getKillers() or getSurvivors()
+	local best, bestD = nil, maxDist or 200
+	for _, m in ipairs(list) do
+		if m ~= LocalPlayer.Character then
+			local hrp = getRoot(m)
+			local hum = m:FindFirstChildOfClass("Humanoid")
+			if hrp and hum and hum.Health > 0 then
+				local d = (hrp.Position - our.Position).Magnitude
+				if d < bestD then bestD, best = d, hrp end
+			end
+		end
+	end
+	return best, bestD
+end
+
+-- ESP
+local function clearHighlight(model)
+	if highlights[model] then
+		pcall(function() highlights[model]:Destroy() end)
+		highlights[model] = nil
+	end
+end
+
+local function applyHighlight(model, color)
+	if not model or not model.Parent then return end
+	local h = highlights[model]
+	if not h or not h.Parent then
+		h = Instance.new("Highlight")
+		h.Name = "HS_HL"
+		h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		h.FillTransparency = 0.65
+		h.OutlineTransparency = 0
+		h.Parent = model
+		highlights[model] = h
+	end
+	h.FillColor = color
+	h.OutlineColor = color
+	h.Adornee = model
+end
+
+local function refreshEsp()
+	for model in pairs(highlights) do
+		if not model.Parent then clearHighlight(model) end
+	end
+	if State.KillerEsp then
+		for _, k in ipairs(getKillers()) do applyHighlight(k, State.EspKillerColor) end
+	else
+		for _, k in ipairs(getKillers()) do clearHighlight(k) end
+	end
+	if State.SurvivorEsp then
+		for _, s in ipairs(getSurvivors()) do
+			if s ~= LocalPlayer.Character then applyHighlight(s, State.EspSurvivorColor) end
+		end
+	else
+		for _, s in ipairs(getSurvivors()) do clearHighlight(s) end
+	end
+end
+
+task.spawn(function()
+	while true do
+		task.wait(1.2)
+		if State.KillerEsp or State.SurvivorEsp then pcall(refreshEsp) end
+	end
+end)
+
+-- AUTO BLOCK
+local blockSounds = {
+	["rbxassetid://102228729296384"] = true, ["rbxassetid://140242176732868"] = true,
+	["rbxassetid://112809109188560"] = true, ["rbxassetid://136323728355613"] = true,
+	["rbxassetid://115026634746636"] = true, ["rbxassetid://84116622032112"] = true,
+	["rbxassetid://108907358619313"] = true, ["rbxassetid://127793641088496"] = true,
+	["rbxassetid://86174610237192"] = true, ["rbxassetid://95079963655241"] = true,
+	["rbxassetid://101199185291628"] = true, ["rbxassetid://119942598489800"] = true,
+	["rbxassetid://84307400688050"] = true, ["rbxassetid://113037804008732"] = true,
+	["rbxassetid://105200830849301"] = true, ["rbxassetid://75330693422988"] = true,
+	["rbxassetid://82221759983649"] = true, ["rbxassetid://81702359653578"] = true,
+	["rbxassetid://108610718831698"] = true, ["rbxassetid://112395455254818"] = true,
+	["rbxassetid://109431876587852"] = true, ["rbxassetid://109348678063422"] = true,
+	["rbxassetid://85853080745515"] = true, ["rbxassetid://98733709078792"] = true,
+	["rbxassetid://105840448036441"] = true, ["rbxassetid://114742322778642"] = true,
+	["rbxassetid://105415540898010"] = true, ["rbxassetid://106300477136129"] = true,
+	["rbxassetid://80516583309685"] = true, ["rbxassetid://116581754553533"] = true,
+	["rbxassetid://71834552297085"] = true, ["rbxassetid://119583605486352"] = true,
+	["rbxassetid://117173212095661"] = true, ["rbxassetid://104910828105172"] = true,
+	["rbxassetid://79980897195554"] = true, ["rbxassetid://116527305931161"] = true,
+	["rbxassetid://131406927389838"] = true, ["rbxassetid://94317217837143"] = true,
+	["rbxassetid://121954639447247"] = true, ["rbxassetid://128856426573270"] = true,
+	["rbxassetid://131123355704017"] = true, ["rbxassetid://107444859834748"] = true,
+	["rbxassetid://133709029886490"] = true,
+}
+
+local function isFacingUs(killerRoot, ourRoot)
+	local toUs = ourRoot.Position - killerRoot.Position
+	if toUs.Magnitude < 0.05 then return true end
+	return killerRoot.CFrame.LookVector:Dot(toUs.Unit) >= State.FacingThreshold
+end
+
+local function onBlockSound(sound)
+	if not State.AutoBlock then return end
+	if sound and sound:IsA("Sound") and blockSounds[sound.SoundId] then
+		fireAbility("Block")
+	end
+end
+
+local function trackKillerBlock(model)
+	if blockTracked[model] then return end
+	local hrp = getRoot(model)
+	if not hrp then return end
+	local conns = {}
+	local listening = false
+
+	local function stopListen()
+		for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+		table.clear(conns)
+		listening = false
+	end
+
+	local function startListen()
+		if listening then return end
+		listening = true
+		table.insert(conns, model.DescendantAdded:Connect(function(d)
+			if d:IsA("Sound") then
+				onBlockSound(d)
+				table.insert(conns, d.Played:Connect(function() onBlockSound(d) end))
+			end
+		end))
+		for _, d in ipairs(model:GetDescendants()) do
+			if d:IsA("Sound") then
+				table.insert(conns, d.Played:Connect(function() onBlockSound(d) end))
+				if d.IsPlaying then onBlockSound(d) end
+			end
+		end
+	end
+
+	local hb
+	hb = RunService.Heartbeat:Connect(function()
+		if not State.AutoBlock then
+			stopListen()
+			if hb then hb:Disconnect() end
+			blockTracked[model] = nil
+			return
+		end
+		if not model.Parent or not hrp.Parent then
+			stopListen()
+			if hb then hb:Disconnect() end
+			blockTracked[model] = nil
+			return
+		end
+		local our = getRoot(LocalPlayer.Character)
+		if not our then return end
+		local dist = (our.Position - hrp.Position).Magnitude
+		if dist <= State.BlockRange and isFacingUs(hrp, our) then
+			startListen()
+		else
+			stopListen()
+		end
+	end)
+	blockTracked[model] = function()
+		stopListen()
+		if hb then hb:Disconnect() end
+		blockTracked[model] = nil
+	end
+end
+
+local function setAutoBlock(on)
+	State.AutoBlock = on
+	if on then
+		for _, k in ipairs(getKillers()) do trackKillerBlock(k) end
+		local folder = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild("Killers")
+		if folder and not blockChildConn then
+			blockChildConn = folder.ChildAdded:Connect(function(c) task.defer(trackKillerBlock, c) end)
+		end
+	else
+		if blockChildConn then blockChildConn:Disconnect() blockChildConn = nil end
+		for _, cleanup in pairs(blockTracked) do cleanup() end
+		table.clear(blockTracked)
+	end
+end
+
+-- NOCLIP / INVIS
+local function setNoclip(on)
+	State.Noclip = on
+	if noclipConn then noclipConn:Disconnect() noclipConn = nil end
+	if not on then
+		local char = LocalPlayer.Character
+		if char then
+			for _, n in ipairs({"Torso","HumanoidRootPart","Head","CollisionHitbox","UpperTorso","LowerTorso"}) do
+				local p = char:FindFirstChild(n)
+				if p and p:IsA("BasePart") then p.CanCollide = true end
+			end
+		end
+		return
+	end
+	noclipConn = RunService.Stepped:Connect(function()
+		if not State.Noclip then return end
+		local char = LocalPlayer.Character
+		if not char then return end
+		for _, n in ipairs({"Torso","HumanoidRootPart","Head","CollisionHitbox","UpperTorso","LowerTorso"}) do
+			local p = char:FindFirstChild(n)
+			if p and p:IsA("BasePart") then p.CanCollide = false end
+		end
+	end)
+end
+
+local function setInvis(on)
+	State.Invis = on
+	local char = LocalPlayer.Character
+	if not char then return end
+	for _, n in ipairs({"Torso","UpperTorso","LowerTorso","HumanoidRootPart","Head"}) do
+		local p = char:FindFirstChild(n)
+		if p and p:IsA("BasePart") then p.CanCollide = not on end
+	end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	local animator = hum and hum:FindFirstChildOfClass("Animator")
+	if on and animator then
+		if invisTrack then pcall(function() invisTrack:Stop() end) end
+		local anim = Instance.new("Animation")
+		anim.AnimationId = "rbxassetid://75804462760596"
+		invisTrack = animator:LoadAnimation(anim)
+		invisTrack:Play()
+		invisTrack:AdjustSpeed(0)
+	elseif invisTrack then
+		pcall(function() invisTrack:Stop() end)
+		invisTrack = nil
+	end
+end
+
+-- M1 BRIEF LOCK
+local function m1Step()
+	if not State.M1Lock then return end
+	local now = os.clock()
+	local our = getRoot(LocalPlayer.Character)
+	if not our then return end
+	if now < m1LockUntil and m1Target and m1Target.Parent then
+		local flat = Vector3.new(m1Target.Position.X, our.Position.Y, m1Target.Position.Z)
+		if (flat - our.Position).Magnitude > 0.15 then
+			our.CFrame = CFrame.lookAt(our.Position, flat)
+		end
+		return
+	end
+	for _, k in ipairs(getKillers()) do
+		local hrp = getRoot(k)
+		local hum = k:FindFirstChildOfClass("Humanoid")
+		if not hrp or not hum or hum.Health <= 0 then continue end
+		if (hrp.Position - our.Position).Magnitude > State.M1LockRange then continue end
+		local anim = hum:FindFirstChildOfClass("Animator")
+		if not anim then continue end
+		for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
+			local id = track.Animation and tostring(track.Animation.AnimationId) or ""
+			if id ~= "" and track.Length > 0 and track.TimePosition / track.Length < 0.55 then
+				if id:find("Slash") or id:find("Attack") or id:find("Punch") or id:find("Stab") or id:find("Swing") or blockSounds[id] then
+					m1Target = hrp
+					m1LockUntil = now + State.M1LockDur
+					return
+				end
+			end
+		end
+	end
+end
+
+-- TWO TIME
+local function ttStep()
+	if not State.TwoTimeBackstab then return end
+	local char = LocalPlayer.Character
+	if not char or char.Name ~= "TwoTime" then return end
+	local root = getRoot(char)
+	if not root then return end
+	local target, bestD = nil, State.TwoTimeDist
+	for _, k in ipairs(getKillers()) do
+		local hrp = getRoot(k)
+		local hum = k:FindFirstChildOfClass("Humanoid")
+		if hrp and hum and hum.Health > 0 then
+			local d = (hrp.Position - root.Position).Magnitude
+			if d < bestD then bestD, target = d, k end
+		end
+	end
+	if not target then return end
+	local tRoot = getRoot(target)
+	if not tRoot then return end
+	if os.clock() - ttLast < 1.15 then return end
+	ttLast = os.clock()
+	local behind = tRoot.CFrame * CFrame.new(0, 0, 3)
+	if State.TwoTimeType == "Teleport" then
+		root.CFrame = behind
+	else
+		root.CFrame = root.CFrame:Lerp(behind, 0.35)
+	end
+	fireAbility("Dagger")
+end
+
+-- SILENT AIM
+local function installSilent()
+	if silentInstalled then return end
+	local ok, mod = pcall(function()
+		return require(ReplicatedStorage.Systems.Player.Miscellaneous.GetPlayerMousePosition)
+	end)
+	if not (ok and mod and type(mod.GetMousePos) == "function") then return end
+	local old = mod.GetMousePos
+	if type(hookfunction) ~= "function" then return end
+	hookfunction(old, function(...)
+		if State.SilentAim then
+			local target = closestEnemyRoot(150)
+			if target then
+				local vel = target.AssemblyLinearVelocity or Vector3.zero
+				return target.Position + vel * State.SilentLead
+			end
+		end
+		return old(...)
+	end)
+	silentInstalled = true
+end
+
+-- ============== UI ==============
+local TabMain = Window:CreateTab("Main", 4483362458)
+local TabVisual = Window:CreateTab("Visual", 4483362458)
+local TabBlock = Window:CreateTab("Block", 4483362458)
+local TabAim = Window:CreateTab("Aimbot", 4483362458)
+local TabSurv = Window:CreateTab("Survivors", 4483362458)
+local TabMisc = Window:CreateTab("Misc", 4483362458)
+local TabCredits = Window:CreateTab("Credits", 4483362458)
+
+TabMain:CreateSection("Movement")
+TabMain:CreateToggle({
+	Name = "Noclip",
+	CurrentValue = false,
+	Flag = "Noclip",
+	Callback = function(v) setNoclip(v) end,
+})
+TabMain:CreateToggle({
+	Name = "Invisibility",
+	CurrentValue = false,
+	Flag = "Invis",
+	Callback = function(v) setInvis(v) end,
+})
+TabMain:CreateKeybind({
+	Name = "Toggle Noclip",
+	CurrentKeybind = "N",
+	Flag = "NoclipKey",
+	Callback = function()
+		setNoclip(not State.Noclip)
+		Rayfield:Notify({ Title = "Noclip", Content = State.Noclip and "On" or "Off", Duration = 2 })
+	end,
+})
+TabMain:CreateSection("Character")
+TabMain:CreateButton({
+	Name = "Reset Character",
+	Callback = function()
+		local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+		if hum then hum.Health = 0 end
+	end,
+})
+TabMain:CreateButton({
+	Name = "Enable Jump",
+	Callback = function()
+		local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+		if hum then hum.JumpPower = 50 hum.UseJumpPower = true end
+	end,
+})
+
+TabVisual:CreateSection("ESP")
+TabVisual:CreateToggle({
+	Name = "Killer ESP",
+	CurrentValue = false,
+	Flag = "KillerEsp",
+	Callback = function(v) State.KillerEsp = v refreshEsp() end,
+})
+TabVisual:CreateToggle({
+	Name = "Survivor ESP",
+	CurrentValue = false,
+	Flag = "SurvivorEsp",
+	Callback = function(v) State.SurvivorEsp = v refreshEsp() end,
+})
+TabVisual:CreateColorPicker({
+	Name = "Killer Color",
+	Color = State.EspKillerColor,
+	Flag = "KillerColor",
+	Callback = function(c) State.EspKillerColor = c if State.KillerEsp then refreshEsp() end end,
+})
+TabVisual:CreateColorPicker({
+	Name = "Survivor Color",
+	Color = State.EspSurvivorColor,
+	Flag = "SurvivorColor",
+	Callback = function(c) State.EspSurvivorColor = c if State.SurvivorEsp then refreshEsp() end end,
+})
+
+TabBlock:CreateSection("Auto Block")
+TabBlock:CreateToggle({
+	Name = "Enable Auto Block",
+	CurrentValue = false,
+	Flag = "AutoBlock",
+	Callback = function(v) setAutoBlock(v) end,
+})
+TabBlock:CreateSlider({
+	Name = "Block Range",
+	Range = {5, 40},
+	Increment = 1,
+	CurrentValue = 15,
+	Flag = "BlockRange",
+	Callback = function(v) State.BlockRange = v end,
+})
+TabBlock:CreateSlider({
+	Name = "Facing Threshold",
+	Range = {0, 1},
+	Increment = 0.05,
+	CurrentValue = 0.25,
+	Flag = "Facing",
+	Callback = function(v) State.FacingThreshold = v end,
+})
+TabBlock:CreateParagraph({
+	Title = "How it works",
+	Content = "Detects killer M1 swing sounds when they are in range and facing you, then fires Block. Works on all killers.",
+})
+
+TabAim:CreateSection("Silent Aim")
+TabAim:CreateToggle({
+	Name = "Enable Silent Aim",
+	CurrentValue = false,
+	Flag = "SilentAim",
+	Callback = function(v) State.SilentAim = v if v then installSilent() end end,
+})
+TabAim:CreateSlider({
+	Name = "Prediction (ms)",
+	Range = {0, 400},
+	Increment = 10,
+	CurrentValue = 150,
+	Flag = "SilentLead",
+	Callback = function(v) State.SilentLead = v / 1000 end,
+})
+TabAim:CreateSection("M1 Brief Lock")
+TabAim:CreateToggle({
+	Name = "M1 Brief HRP Lock",
+	CurrentValue = false,
+	Flag = "M1Lock",
+	Callback = function(v)
+		State.M1Lock = v
+		if v and not m1Conn then m1Conn = RunService.Heartbeat:Connect(m1Step)
+		elseif not v and m1Conn then m1Conn:Disconnect() m1Conn = nil end
+	end,
+})
+TabAim:CreateSlider({
+	Name = "Lock Duration",
+	Range = {0.1, 1},
+	Increment = 0.05,
+	CurrentValue = 0.35,
+	Flag = "M1Dur",
+	Callback = function(v) State.M1LockDur = v end,
+})
+TabAim:CreateSlider({
+	Name = "Lock Range",
+	Range = {5, 40},
+	Increment = 1,
+	CurrentValue = 20,
+	Flag = "M1Range",
+	Callback = function(v) State.M1LockRange = v end,
+})
+
+TabSurv:CreateSection("Two Time")
+TabSurv:CreateToggle({
+	Name = "Auto Backstab",
+	CurrentValue = false,
+	Flag = "TTBackstab",
+	Callback = function(v)
+		State.TwoTimeBackstab = v
+		if v and not ttConn then ttConn = RunService.Heartbeat:Connect(ttStep)
+		elseif not v and ttConn then ttConn:Disconnect() ttConn = nil end
+	end,
+})
+TabSurv:CreateDropdown({
+	Name = "Backstab Type",
+	Options = {"Teleport", "Lerp"},
+	CurrentOption = {"Teleport"},
+	Flag = "TTType",
+	Callback = function(opt)
+		State.TwoTimeType = type(opt) == "table" and opt[1] or opt
+	end,
+})
+TabSurv:CreateSlider({
+	Name = "Max Distance",
+	Range = {5, 30},
+	Increment = 1,
+	CurrentValue = 15,
+	Flag = "TTDist",
+	Callback = function(v) State.TwoTimeDist = v end,
+})
+
+TabMisc:CreateSection("Performance")
+TabMisc:CreateButton({
+	Name = "your blue box stays infront of you wow",
+	Callback = function()
+		pcall(function()
+			loadstring(game:HttpGet("https://raw.githubusercontent.com/zxcursedsocute/Forsaken-Script/refs/heads/main/anti%20lag%20test"))()
+		end)
+		Rayfield:Notify({ Title = "Anti-Lag", Content = "Loaded", Duration = 3 })
+	end,
+})
+TabMisc:CreateSection("Server")
+TabMisc:CreateButton({
+	Name = "Rejoin",
+	Callback = function()
+		game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+	end,
+})
+
+TabCredits:CreateSection("Huntsaken")
+TabCredits:CreateParagraph({ Title = "Owner", Content = "Noah" })
+TabCredits:CreateParagraph({ Title = "Co owner", Content = "Noah" })
+TabCredits:CreateParagraph({ Title = "Helper", Content = "my good friend" })
+TabCredits:CreateParagraph({ Title = "Coder", Content = "me + my friend" })
+TabCredits:CreateParagraph({ Title = "Version", Content = "Beta 1 — Rayfield clean rebuild" })
+
+Rayfield:LoadConfiguration()
+Rayfield:Notify({ Title = "Huntsaken", Content = "Loaded. Key: release", Duration = 4 })
